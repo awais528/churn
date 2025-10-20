@@ -110,22 +110,70 @@ def create_sample_model():
         'predict_function': lambda customer_data, model_data: (0, np.array([0.7, 0.3]))
     }
 
+def create_customer_features(customer_data, encoders):
+    """Create customer features that match the training exactly"""
+    features = customer_data.copy()
+    
+    # Calculate engineered features EXACTLY as in training
+    try:
+        tenure = features.get('Tenure', 1)
+        support_calls = features.get('Support Calls', 0)
+        total_spend = features.get('Total Spend', 0)
+        last_interaction = features.get('Last Interaction', 0)
+        
+        # Use EXACT same calculation as training
+        features['Support_Calls_Per_Month'] = support_calls / (tenure + 1)
+        features['Avg_Spend_Per_Month'] = total_spend / (tenure + 1)
+        features['Interaction_Frequency'] = last_interaction / (tenure + 1)
+    except Exception as e:
+        st.error(f"Error in feature engineering: {e}")
+        # Set defaults if calculation fails
+        features['Support_Calls_Per_Month'] = 0
+        features['Avg_Spend_Per_Month'] = 0
+        features['Interaction_Frequency'] = 0
+    
+    return features
+
+def encode_categorical_features(customer_data, encoders):
+    """Encode categorical features using the same encoders from training"""
+    encoded_data = customer_data.copy()
+    
+    for feature, encoder in encoders.items():
+        if feature in encoded_data:
+            try:
+                value_str = str(encoded_data[feature])
+                if value_str in encoder.classes_:
+                    encoded_data[feature] = encoder.transform([value_str])[0]
+                else:
+                    # Use first class as default for unknown values
+                    encoded_data[feature] = encoder.transform([encoder.classes_[0]])[0]
+            except Exception as e:
+                st.error(f"Error encoding {feature}: {e}")
+                encoded_data[feature] = 0
+    
+    return encoded_data
+
 def predict_churn(customer_data, model_data):
-    """Make prediction with robust error handling"""
+    """Make prediction using the model's predict_function"""
     try:
         if 'predict_function' in model_data:
             return model_data['predict_function'](customer_data, model_data)
         else:
-            # Fallback to direct model prediction
+            # Fallback to manual prediction
             model = model_data['model']
+            scaler = model_data.get('scaler', None)
             feature_names = model_data.get('feature_names', [])
             
-            # Create feature vector
+            # Create feature vector in correct order
             feature_vector = []
             for feature in feature_names:
                 feature_vector.append(customer_data.get(feature, 0))
             
             feature_array = np.array(feature_vector).reshape(1, -1)
+            
+            # Apply scaling if needed
+            if scaler is not None:
+                feature_array = scaler.transform(feature_array)
             
             prediction = model.predict(feature_array)[0]
             probability = model.predict_proba(feature_array)[0]
@@ -136,28 +184,6 @@ def predict_churn(customer_data, model_data):
         st.error(f"Prediction error: {e}")
         # Return safe default
         return 0, np.array([0.8, 0.2])
-
-def create_customer_features(customer_data):
-    """Create customer features with engineered features"""
-    features = customer_data.copy()
-    
-    # Calculate engineered features safely
-    try:
-        tenure = features.get('Tenure', 1)
-        support_calls = features.get('Support Calls', 0)
-        total_spend = features.get('Total Spend', 0)
-        last_interaction = features.get('Last Interaction', 0)
-        
-        features['Support_Calls_Per_Month'] = support_calls / max(tenure, 1)
-        features['Avg_Spend_Per_Month'] = total_spend / max(tenure, 1)
-        features['Interaction_Frequency'] = last_interaction / max(tenure, 1)
-    except:
-        # Set defaults if calculation fails
-        features['Support_Calls_Per_Month'] = 0
-        features['Avg_Spend_Per_Month'] = 0
-        features['Interaction_Frequency'] = 0
-    
-    return features
 
 def main():
     # Header
@@ -170,13 +196,21 @@ def main():
         st.warning("Running in demonstration mode with sample predictions")
         model_data = create_sample_model()
     
-    # Display model info
+    # Display model info - FIXED: Properly extract model information
     model_name = model_data.get('model_name', 'Unknown Model')
     accuracy = model_data.get('accuracy', 0)
+    feature_names = model_data.get('feature_names', [])
+    encoders = model_data.get('label_encoders', {})
     
     st.sidebar.header("🤖 Model Information")
     st.sidebar.metric("Algorithm", model_name)
     st.sidebar.metric("Accuracy", f"{accuracy:.1%}")
+    
+    # Show feature info in expander
+    with st.sidebar.expander("📋 Model Features"):
+        st.write(f"Number of features: {len(feature_names)}")
+        for feature in feature_names:
+            st.write(f"• {feature}")
     
     # Customer input section
     st.sidebar.header("👤 Customer Details")
@@ -221,9 +255,6 @@ def main():
                 'Last Interaction': last_interaction
             }
             
-            # Add engineered features
-            customer_data = create_customer_features(customer_data)
-            
             # Show customer summary
             with st.expander("📋 Customer Summary", expanded=True):
                 summary_col1, summary_col2 = st.columns(2)
@@ -242,83 +273,89 @@ def main():
             
             # Make prediction
             with st.spinner("Analyzing customer data..."):
-                prediction, probability = predict_churn(customer_data, model_data)
-            
-            # Display results
-            churn_prob = probability[1]
-            no_churn_prob = probability[0]
-            
-            if prediction == 0:
-                st.markdown(f"""
-                <div class="prediction-box safe">
-                    <h2>✅ LOW CHURN RISK</h2>
-                    <p>Probability of staying: <strong>{no_churn_prob:.1%}</strong></p>
-                </div>
-                """, unsafe_allow_html=True)
-            else:
-                st.markdown(f"""
-                <div class="prediction-box risk">
-                    <h2>🚨 HIGH CHURN RISK</h2>
-                    <p>Probability of churning: <strong>{churn_prob:.1%}</strong></p>
-                </div>
-                """, unsafe_allow_html=True)
-            
-            # Probability metrics
-            st.subheader("Probability Analysis")
-            metric_col1, metric_col2 = st.columns(2)
-            
-            with metric_col1:
-                st.metric("Probability of Staying", f"{no_churn_prob:.1%}")
-                
-            with metric_col2:
-                st.metric("Probability of Churning", f"{churn_prob:.1%}")
-            
-            # Visualization
-            fig, ax = plt.subplots(figsize=(10, 4))
-            
-            probabilities = [no_churn_prob, churn_prob]
-            labels = ['Stay', 'Churn']
-            colors = ['#28a745', '#dc3545']
-            
-            bars = ax.bar(labels, probabilities, color=colors, alpha=0.7)
-            ax.set_ylabel('Probability')
-            ax.set_ylim(0, 1)
-            ax.set_title('Churn Prediction Probabilities')
-            
-            # Add value labels
-            for bar, prob in zip(bars, probabilities):
-                height = bar.get_height()
-                ax.text(bar.get_x() + bar.get_width()/2., height + 0.01,
-                       f'{prob:.1%}', ha='center', va='bottom', fontweight='bold')
-            
-            st.pyplot(fig)
-            
-            # Recommendations
-            st.subheader("📋 Recommendations")
-            if prediction == 1 or churn_prob > 0.6:
-                st.warning("""
-                **🚨 Immediate Actions Recommended:**
-                - Contact customer for feedback
-                - Offer retention discount
-                - Assign dedicated account manager
-                - Review service usage patterns
-                """)
-            elif churn_prob > 0.3:
-                st.info("""
-                **🟡 Proactive Actions:**
-                - Send satisfaction survey
-                - Offer feature training
-                - Monitor usage patterns
-                - Schedule review call
-                """)
-            else:
-                st.success("""
-                **🟢 Maintenance Actions:**
-                - Continue regular engagement
-                - Monitor usage patterns
-                - Proactively offer upgrades
-                - Gather feedback
-                """)
+                try:
+                    # Use the model's built-in predict function
+                    prediction, probability = predict_churn(customer_data, model_data)
+                    
+                    # Display results
+                    churn_prob = probability[1]
+                    no_churn_prob = probability[0]
+                    
+                    if prediction == 0:
+                        st.markdown(f"""
+                        <div class="prediction-box safe">
+                            <h2>✅ LOW CHURN RISK</h2>
+                            <p>Probability of staying: <strong>{no_churn_prob:.1%}</strong></p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    else:
+                        st.markdown(f"""
+                        <div class="prediction-box risk">
+                            <h2>🚨 HIGH CHURN RISK</h2>
+                            <p>Probability of churning: <strong>{churn_prob:.1%}</strong></p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    
+                    # Probability metrics
+                    st.subheader("Probability Analysis")
+                    metric_col1, metric_col2 = st.columns(2)
+                    
+                    with metric_col1:
+                        st.metric("Probability of Staying", f"{no_churn_prob:.1%}")
+                        
+                    with metric_col2:
+                        st.metric("Probability of Churning", f"{churn_prob:.1%}")
+                    
+                    # Visualization
+                    fig, ax = plt.subplots(figsize=(10, 4))
+                    
+                    probabilities = [no_churn_prob, churn_prob]
+                    labels = ['Stay', 'Churn']
+                    colors = ['#28a745', '#dc3545']
+                    
+                    bars = ax.bar(labels, probabilities, color=colors, alpha=0.7)
+                    ax.set_ylabel('Probability')
+                    ax.set_ylim(0, 1)
+                    ax.set_title('Churn Prediction Probabilities')
+                    
+                    # Add value labels
+                    for bar, prob in zip(bars, probabilities):
+                        height = bar.get_height()
+                        ax.text(bar.get_x() + bar.get_width()/2., height + 0.01,
+                               f'{prob:.1%}', ha='center', va='bottom', fontweight='bold')
+                    
+                    st.pyplot(fig)
+                    
+                    # Recommendations
+                    st.subheader("📋 Recommendations")
+                    if prediction == 1 or churn_prob > 0.6:
+                        st.warning("""
+                        **🚨 Immediate Actions Recommended:**
+                        - Contact customer for feedback
+                        - Offer retention discount
+                        - Assign dedicated account manager
+                        - Review service usage patterns
+                        """)
+                    elif churn_prob > 0.3:
+                        st.info("""
+                        **🟡 Proactive Actions:**
+                        - Send satisfaction survey
+                        - Offer feature training
+                        - Monitor usage patterns
+                        - Schedule review call
+                        """)
+                    else:
+                        st.success("""
+                        **🟢 Maintenance Actions:**
+                        - Continue regular engagement
+                        - Monitor usage patterns
+                        - Proactively offer upgrades
+                        - Gather feedback
+                        """)
+                        
+                except Exception as e:
+                    st.error(f"Prediction failed: {str(e)}")
+                    st.info("Try using the demo model or retraining the model")
     
     with col2:
         st.header("📈 Insights")
