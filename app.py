@@ -221,19 +221,19 @@ def main():
     # Load model
     model_data = safe_load_model()
     
-    # Debug information (collapsed by default)
-    with st.expander("🔍 Debug Information", expanded=False):
-        if model_data:
-            st.write("Model data keys:", list(model_data.keys()))
-            if 'model_name' in model_data:
-                st.write("Model name:", model_data['model_name'])
-            if 'accuracy' in model_data:
-                st.write("Accuracy:", model_data['accuracy'])
-            if 'feature_names' in model_data:
-                st.write("Number of features:", len(model_data['feature_names']))
-                st.write("Features:", model_data['feature_names'])
-        else:
-            st.write("No model data loaded")
+#    # Debug information (collapsed by default)
+#   with st.expander("🔍 Debug Information", expanded=False):
+#        if model_data:
+#            st.write("Model data keys:", list(model_data.keys()))
+#            if 'model_name' in model_data:
+#                st.write("Model name:", model_data['model_name'])
+#            if 'accuracy' in model_data:
+#                st.write("Accuracy:", model_data['accuracy'])
+#            if 'feature_names' in model_data:
+#                st.write("Number of features:", len(model_data['feature_names']))
+#                st.write("Features:", model_data['feature_names'])
+#        else:
+#            st.write("No model data loaded")
     
     # Use fallback if no model loaded
     if model_data is None:
